@@ -1,1 +1,36 @@
 # 5. PRODUCTION TRAINING & DISTRIBUTION MAP
+# ml_pipeline/config.yaml
+
+model_metadata:
+  name: "retail_credit_scoring_v1"
+  version: "1.0.0"
+  description: "Standard application scorecard for unsecured personal loans."
+  artifacts_dir: "ml_pipeline/artifacts"
+
+data:
+  train_path: "data/processed/train_batch.parquet"
+  test_path: "data/processed/test_batch.parquet"
+  target: "default_flag" # 1 = Default, 0 = Good
+
+features:
+  # This list will be dynamically updated by feature_selection.py
+  - "revolving_utilization_of_unsecured_lines"
+  - "age"
+  - "number_of_time_30_to_59_days_past_due_not_worse"
+  - "debt_ratio"
+  - "monthly_income"
+  - "number_of_open_credit_lines_and_loans"
+  - "number_of_times_90_days_late"
+  - "number_real_estate_loans_or_lines"
+  - "number_of_time_60_to_89_days_past_due_not_worse"
+  - "number_of_dependents"
+
+imputation_strategy: "median"
+
+logistic_regression:
+  penalty: "l2"
+  C: 0.1
+  
+monitoring:
+  psi_alert_threshold: 0.25  # Standard bureau threshold for significant drift
+  psi_warning_threshold: 0.10
