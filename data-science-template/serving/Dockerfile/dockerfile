@@ -1,0 +1,64 @@
+# ==========================================
+# Stage 1: Builder
+# ==========================================
+FROM python:3.11-slim AS builder
+
+# Set Python environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install build dependencies (needed for compiling certain ML packages)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create a virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ==========================================
+# Stage 2: Production Runner
+# ==========================================
+FROM python:3.11-slim
+
+# Set Python environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app"
+
+# Install runtime dependencies (libgomp1 is critical for LightGBM/XGBoost multi-threading)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security
+RUN groupadd -r mluser && useradd -r -g mluser mluser
+
+WORKDIR /app
+
+# Copy the virtual environment from the builder stage
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy application code
+COPY . /app/
+
+# Make the entrypoint script executable and assign ownership
+RUN chmod +x /app/entrypoint.sh && \
+    chown -R mluser:mluser /app
+
+# Switch to the non-root user
+USER mluser
+
+EXPOSE 8000
+
+# Route execution through the entrypoint script
+ENTRYPOINT ["/app/entrypoint.sh"]
