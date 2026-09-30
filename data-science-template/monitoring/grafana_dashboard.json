@@ -1,0 +1,105 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "title": "Credit Bureau - Serving Layer & Model Governance",
+  "tags": ["credit-scoring", "mlops", "pydantic-guardrails", "circuit-breaker"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Inference Latency Percentiles (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(credit_scoring_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "p50 (Median)"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(credit_scoring_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(credit_scoring_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "p99 SLA Threshold"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth" },
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Circuit Breaker State",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "credit_circuit_breaker_state",
+          "legendFormat": "State"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "CLOSED (Healthy)", "color": "green" } } },
+            { "type": "value", "options": { "1": { "text": "HALF-OPEN (Testing)", "color": "yellow" } } },
+            { "type": "value", "options": { "2": { "text": "OPEN (Tripped/Fallback)", "color": "red" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Feature Drift - Population Stability Index (PSI / CSI)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "credit_model_psi_score",
+          "legendFormat": "PSI - {{ feature_name }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line" },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": 0.0, "color": "green" },
+              { "value": 0.1, "color": "yellow" },
+              { "value": 0.25, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "LLM Fair Lending Guardrail Interventions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_guardrail_rejections_total[5m])) by (reason)",
+          "legendFormat": "Fallback Triggered: {{ reason }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars" },
+          "unit": "req/sec"
+        }
+      }
+    }
+  ],
+  "schemaVersion": 38,
+  "refresh": "5s"
+}
