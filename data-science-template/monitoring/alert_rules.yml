@@ -1,0 +1,33 @@
+# monitoring/alert_rules.yml
+groups:
+  - name: credit_serving_alerts
+    rules:
+      # Circuit Breaker Tripped Alert
+      - alert: CircuitBreakerOpen
+        expr: credit_circuit_breaker_state{state="OPEN"} == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit Breaker OPEN on instance {{ $labels.instance }}"
+          description: "The credit scoring service circuit breaker has tripped to OPEN due to consecutive downstream/model execution failures."
+
+      # High Latency Alert (p99 > 50ms over 5m window)
+      - alert: HighInferenceLatencyP99
+        expr: histogram_quantile(0.99, sum(rate(credit_scoring_latency_ms_bucket[5m])) by (le)) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p99 Latency on Credit Decision API"
+          description: "p99 inference execution latency is {{ $value }}ms, exceeding the target SLA threshold of 50ms."
+
+      # High Feature Drift Alert (PSI > 0.25)
+      - alert: SignificantPopulationDrift
+        expr: credit_model_psi_score > 0.25
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Significant Population Drift (PSI > 0.25) Detected"
+          description: "Feature {{ $labels.feature_name }} has a PSI of {{ $value }}, indicating substantial population distribution shift requiring model retraining."
