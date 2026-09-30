@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: credit-decision-api
+  namespace: production
+  labels:
+    app.kubernetes.io/name: credit-decision-api
+    app.kubernetes.io/part-of: credit-bureau-platform
+    app.kubernetes.io/component: serving-layer
+    app.kubernetes.io/tier: backend
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0  # Zero-downtime rolling updates
+  selector:
+    matchLabels:
+      app: credit-decision-api
+  template:
+    metadata:
+      labels:
+        app: credit-decision-api
+        tier: backend
+    spec:
+      # Spread pods across nodes and zones to eliminate single points of failure
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: credit-decision-api
+      containers:
+        - name: credit-decision-api
+          image: IMAGE_PLACEHOLDER # Injected automatically during CI/CD pipeline run
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: APP_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: WORKERS_COUNT
+              value: "4"
+          resources:
+            requests:
+              cpu: "1000m"      # 1 vCPU per pod guaranteed
+              memory: "2Gi"     # Memory headroom for LightGBM/XGBoost inference in RAM
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          
+          # Health Probes integrated directly with CircuitBreaker endpoint
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2  # Drops traffic immediately if circuit breaker trips (503)
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Set to false to allow temp file scoring writes if needed
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop:
+                - ALL
+
+---
+# HorizontalPodAutoscaler to handle spike traffic dynamically
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: credit-decision-api-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: credit-decision-api
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
