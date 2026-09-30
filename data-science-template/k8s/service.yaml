@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: credit-decision-api
+  namespace: production
+  labels:
+    app.kubernetes.io/name: credit-decision-api
+    app.kubernetes.io/component: serving-layer
+  annotations:
+    # Configures AWS Network Load Balancer (NLB) for high concurrency and low latency
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal" # Internal NLB for origination system privacy
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: credit-decision-api
+  sessionAffinity: None
