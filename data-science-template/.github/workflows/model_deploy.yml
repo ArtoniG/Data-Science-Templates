@@ -1,1 +1,119 @@
-#
+name: Credit Decision MLOps Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: "sa-east-1"                   # Ensures localized data residency for LGPD compliance
+  ECR_REPOSITORY: "credit-decision-api"
+  EKS_CLUSTER: "credit-bureau-prod-cluster"
+
+jobs:
+  governance_and_test:
+    name: 🛡️ Audit Gates & Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: 🧪 Run Unit & Integration Tests (Pytest)
+        run: |
+          # Tests Pydantic guardrails, Circuit Breaker, and FastAPI endpoints
+          pytest tests/ --cov=serving_layer --cov-report=xml
+
+      - name: ⚖️ MRM Cryptographic Audit Gate (Phase 2)
+        run: |
+          # CRITICAL: This script will exit with code 1 and halt the entire pipeline 
+          # if prohibited features (Fair Lending) are found or if Gini < 0.40.
+          python -m governance_integration.audit_logger \
+            --artifacts ml_pipeline/artifacts \
+            --config ml_pipeline/config.yaml
+            
+      - name: Archive Audit Manifest
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: regulatory-audit-manifest
+          path: ml_pipeline/artifacts/audit_manifest.json
+
+  build_and_push:
+    name: 🐳 Build & Push Docker Image
+    needs: governance_and_test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Building production image with C++ bindings (libgomp1)..."
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "Pushing to secure ECR registry..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+  deploy:
+    name: 🚀 Deploy to Kubernetes (EKS)
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update Kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Deploy API and Batch Jobs to EKS
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+        run: |
+          # Inject the new image tag into the Kubernetes deployment manifests
+          sed -i "s|IMAGE_PLACEHOLDER|$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" k8s/deployment.yaml
+          
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          
+          # Monitor rollout status
+          kubectl rollout status deployment/credit-decision-api -n production
